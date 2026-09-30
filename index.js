@@ -15,6 +15,7 @@ const chatHistories = new Map();
 const lastMsgAt = new Map();
 const followupSent = new Map();
 
+// Image Links
 const COMBINE_IMAGE = "https://raw.githubusercontent.com/aasanefoods-coder/aasane-bot/main/Max_a_isme_har_packet_ke_a.png";
 const CHOCOLATE_IMAGE = "https://raw.githubusercontent.com/aasanefoods-coder/aasane-bot/main/WhatsApp%20Imagec%202026-09-28%20at%2010.55.51%20PM.jpeg";
 const MANGO_IMAGE = "https://raw.githubusercontent.com/aasanefoods-coder/aasane-bot/main/WhatsApp%20Imagem%202026-09-28%20at%2010.55.35%20PM.jpeg";
@@ -32,7 +33,7 @@ const RECIPE_TEXT_URDU = `🍨 صرف ایک پاؤ دودھ سے تقریباً
 
 1️⃣ آئس کریم پاؤڈر کو ایک پاؤ بہترین کوالٹی کے کھلے دودھ میں اچھی طرح مکس کریں تاکہ کوئی بھی گھٹلی (Lumps) باقی نہ رہے۔
 2️⃣ درمیانی آنچ پر مکسچر کو صرف ایک مکمل ابال دیں، جیسے دودھ کو ایک ابال دیا جاتا ہے۔ اسے پکانا نہیں ہے۔
-3️⃣ مکسچر کو ٹھنڈا کریں، لیکن وقفے وقفے سے چمچ یا وسک (Whisk) چلاتے رہیں تاکہ اوپر بالائی نہ جمے، اور پتیلی کی سائیڈوں پر جمنے والے بیس (Base) کو بھی مکسچر میں یکجان کرتے رہیں۔
+3️⃣ مکسچر کو ٹھنڈا کریں، لیکن وقفے وقفے سے چمچ یا وسک (Whisk) چلاتے رہیں تاکہ اوپر بالائی نہ جمے۔
 4️⃣ بیس (Base) کو کسی بھی ایئر ٹائٹ کنٹینر میں ڈال کر ڈیپ فریزر میں مکمل جمنے تک رکھیں۔
 5️⃣ آئس کریم بیس (Ice Cream Base) کو باؤل میں نکالیں، فلیور شامل کریں۔
 6️⃣ الیکٹرک بیٹر سے 4 سے 5 منٹ یا آئس کریم کا والیوم تقریباً 3 گنا ہونے تک فل اسپیڈ پر بیٹ کریں۔
@@ -45,66 +46,51 @@ const RECIPE_TEXT_URDU = `🍨 صرف ایک پاؤ دودھ سے تقریباً
 - بیٹ کرنے سے پہلے یقینی بنائیں کہ بیس مکمل جما ہوا ہو، اس میں ذرا سا بھی لیکوئیڈ (Liquid) باقی نہ ہو۔`;
 
 const SYSTEM_PROMPT = `
-Tu "Aasane Foods" (Pakistan) ki friendly, polite aur professional sales girl hai.
-Tu WhatsApp par Pakistani Roman Urdu, Urdu Script ya English me baat karti hai.
+Tu "Aasane Foods" (Pakistan) ki polite aur helpful sales representative hai.
+Tu WhatsApp par Roman Urdu, Urdu Script ya English me baat karti hai.
 
-TONE:
-- Friendly, attractive, short aur sales-focused.
-- Customer ko comfortable feel karwao taake order ho.
-- Short replies (2-4 lines). Extra bakwas mat karo.
+GREETING RULES (STRICT):
+- Full Greeting ("Assalam-o-Alaikum! Aasane Foods me khushamdeed!") ONLY in the VERY FIRST message.
+- If customer says "AOA", "Assalam-o-Alaikum", "Salam" in LATER messages, ONLY reply: "Walaikum Assalam! Ji batayein, main kya madad kar sakti hoon?"
+- DO NOT repeat "Aasane Foods me khushamdeed" or send product intros in follow-up chats!
 
-GREETING RULE (STRICT):
-- Greeting SIRF pehli baat me do:
-  "Assalam-o-Alaikum! Aasane Foods me khushamdeed! 🍦"
-- Follow-up messages me kabhi dobara "khushamdeed", "Assalam-o-Alaikum", "kaise hain" mat bolo.
-- Agar customer "greeting bhejo" bole, to short welcome do, order details mat mango.
+PRODUCT & PRICING:
+- Main Product: Ice Cream Mix Powder (Rs. 180 per packet)
+- 5 Flavors ONLY: Chocolate, Mango (never write "Aam"), Strawberry, Vanilla, Pistachio/Pista (never write "Kulfa").
+- Delivery Charges (DC):
+  * Karachi: 1-3 Packets = Rs. 200 | 4-5 Packets = Rs. 150
+  * Other Cities: 1-3 Packets = Rs. 250 | 4-5 Packets = Rs. 150
+- Fixed Price: Strictly Rs. 180. If discount asked: "Sir 20 packets lene walo ko bhi 180 hi lagta hai, price pehle se bohot kam hai."
 
-PRODUCT:
-- Sirf 1 product: Ice Cream Mix Powder
-- Price: Rs. 180 per packet
-- 5 Flavors ONLY:
-  1) Chocolate
-  2) Mango (kabhi "Aam/آم" mat likho)
-  3) Strawberry
-  4) Vanilla
-  5) Pistachio / Pista (kabhi "Kulfa" mat likho)
+PHONE NUMBER VALIDATION (PAKISTAN):
+- Phone number MUST be valid:
+  * Starts with '03' and EXACTLY 11 digits long (e.g., 03001234567).
+  * OR starts with '923' and EXACTLY 12 digits long (e.g., 923001234567).
+- If phone number is missing digits or invalid, SAY EXACTLY:
+  "Bhai phone number incomplete hai. Pakistani number 11 digits ka (0300xxxxxxx) hona chahiye. Kindly sahi number bhej dein."
 
-DELIVERY CHARGES (DC):
-- Karachi: 1-3 packets = Rs. 200 | 4-5 packets = Rs. 150
-- Other Cities: 1-3 packets = Rs. 250 | 4-5 packets = Rs. 150
+ORDER CONFIRMATION TWO-STEP FLOW:
+1. When customer provides Name, Phone, and Address (with City):
+   - First check if Phone Number is valid (11 digits starting 03 or 12 digits starting 923).
+   - If address is missing City, ask for City name.
+   - If valid, send BILL PREVIEW and ask for confirmation:
+     "Aapka order bill summary:
+     Name: [Name]
+     Phone: [Phone]
+     Address: [Address, City]
+     Packets: [Packets] ([Flavors])
+     Total COD: Rs. [Total] (including DC)
 
-DISCOUNT RULE:
-- Price fixed Rs. 180.
-- Agar discount maange: "Sir already price bohot kam hai. 20 packets lene walo ko bhi 180 hi lagta hai."
-
-ORDER RULE (VERY IMPORTANT):
-- Order details (Name, Phone, Address+City) SIRF tab mango jab customer clearly order karna chahe.
-- Greeting, flavors, price, recipe, photo sawalon par order details MAT mango.
-- Order ke time ye 3 cheezen lazmi:
-  1) Name
-  2) Contact Number
-  3) Complete Address with City
-- Agar incomplete ho to ye exact message do:
-  "Bhai ye details incomplete hain. Kindly dobara bhej dein:
-  1) Name
-  2) Contact Number
-  3) Complete Address (City ke sath)"
+     Kya order confirm kar dein? Kindly 'HAAN' ya 'YES' likh kar bata dein."
+   - Set "order_confirmed": false at this stage!
+2. Set "order_confirmed": true ONLY AND ONLY IF customer explicitly replies "HAAN", "HAN", "YES", "OK", "CONFIRM DO", etc.
 
 RECIPE RULE:
-- Agar customer recipe/tareeqa/video pooche:
-  - Khud recipe steps mat likho.
-  - Short bolo: "Ji, recipe aur video tutorial ye raha:"
-  - is_recipe_requested = true set karo.
-
-FLAVOR RULE:
-- Agar customer flavors pooche:
-  - Short text do: "Hamare paas ye 5 flavors available hain: Chocolate, Mango, Strawberry, Vanilla, Pistachio."
-  - is_flavor_request = true set karo.
+- If customer asks recipe/video/tareeqa: DO NOT write recipe text yourself. Set "is_recipe_requested": true and write short line: "Ji, recipe aur video tutorial ye raha:"
 
 JSON RESPONSE FORMAT (STRICT):
 {
-  "text_reply": "customer ko bhejne wala short message",
-  "is_first_greeting": true/false,
+  "text_reply": "Message for customer",
   "is_flavor_request": true/false,
   "is_recipe_requested": true/false,
   "order_confirmed": true/false,
@@ -231,44 +217,36 @@ app.post("/webhook", async (req, res) => {
     let textReply = "";
     try {
       parsed = JSON.parse(completion.choices[0].message.content);
-      textReply = parsed.text_reply || "Ji, batayein main madad karta hoon.";
+      textReply = parsed.text_reply || "Ji, batayein main madad karti hoon.";
     } catch (e) {
-      textReply = "Ji, batayein main madad karta hoon.";
+      textReply = "Ji, batayein main madad karti hoon.";
     }
 
-    // Force first greeting behavior
+    // Override first message greeting
     if (isFirstTimeUser) {
       textReply = "Assalam-o-Alaikum! Aasane Foods me khushamdeed! 🍦\nGhar par creamy ice cream banane ka premium mix powder sirf Rs. 180 me.";
-      parsed.is_first_greeting = true;
     }
 
     history.push({ role: "assistant", content: textReply });
     await sendText(from, textReply, phoneId, waToken);
 
-    // 1) First message => combine image
-    if (isFirstTimeUser || parsed.is_first_greeting) {
+    // 1) Combine Image ONLY on VERY FIRST message
+    if (isFirstTimeUser) {
       await sendImage(
         from,
         COMBINE_IMAGE,
-        "🍦 Aasane Foods - 5 Premium Flavors\nChocolate • Mango • Strawberry • Vanilla • Pistachio",
+        "🍦 Aasane Premium Ice Cream Mix Powder - 5 Flavors",
         phoneId,
         waToken
       );
     }
 
-    // 2) Flavors request => 5 separate images + text already sent
+    // 2) 5 Separate Images on Flavor Request
     const askedFlavors =
       parsed.is_flavor_request ||
       /flavor|flavours|konse flavor|kon sa flavor|available flavor|flover/i.test(customerText);
 
     if (askedFlavors && !isFirstTimeUser) {
-      await sendText(
-        from,
-        "Hamare paas ye 5 flavors available hain:\n1) Chocolate\n2) Mango\n3) Strawberry\n4) Vanilla\n5) Pistachio / Pista\n\nAap kaunsa flavor try karna chahenge?",
-        phoneId,
-        waToken
-      );
-
       await sendImage(from, CHOCOLATE_IMAGE, "Chocolate 🍫", phoneId, waToken);
       await sendImage(from, MANGO_IMAGE, "Mango 🥭", phoneId, waToken);
       await sendImage(from, STRAWBERRY_IMAGE, "Strawberry 🍓", phoneId, waToken);
@@ -276,7 +254,7 @@ app.post("/webhook", async (req, res) => {
       await sendImage(from, PISTA_IMAGE, "Pistachio 🥜", phoneId, waToken);
     }
 
-    // 3) Recipe request => video first, then urdu recipe
+    // 3) Recipe Request => Send Video Tutorial link + Urdu text
     const askedRecipe =
       parsed.is_recipe_requested ||
       /recipe|tareeqa|kaise banaye|banane ka|video/i.test(customerText);
@@ -291,8 +269,9 @@ app.post("/webhook", async (req, res) => {
       await sendText(from, RECIPE_TEXT_URDU, phoneId, waToken);
     }
 
-    // 4) Save confirmed order to Google Sheet (optional)
+    // 4) Save confirmed order to Google Sheet
     if (parsed.order_confirmed && parsed.order_data && sheetScriptUrl) {
+      console.log("📊 Saving confirmed order to Google Sheet...");
       await axios.post(sheetScriptUrl, parsed.order_data).catch((err) => {
         console.error("Sheet save error:", err.message);
       });
@@ -331,5 +310,5 @@ setInterval(async () => {
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Aasane Foods Sales Bot Live on Port ${PORT}`);
+  console.log(`🚀 Aasane Foods Complete Validated Sales Bot Live on Port ${PORT}`);
 });
