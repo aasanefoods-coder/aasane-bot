@@ -12,7 +12,8 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.trim() : "" 
 });
 
-// Memory maps for 24-hour single follow-up
+// Memory maps for Chat History (Prevents repeated greetings)
+const chatHistories = new Map();
 const lastMsgAt = new Map();
 const followupSent = new Map();
 
@@ -20,20 +21,21 @@ const followupSent = new Map();
 const SYSTEM_PROMPT = `
 Tu "Aasane Foods" (Pakistan) ki polite aur professional sales representative hai. Tu WhatsApp par Pakistani Roman Urdu, Urdu Script, ya English me baat karti hai.
 
-GREETING & FIRST MESSAGE RULE (STRICT):
-- "Assalam-o-Alaikum! Aasane Foods me khushamdeed!" ONLY AND ONLY FIRST MESSAGE ME BOLNA HAI.
-- Har message me "Aasane Foods me khushamdeed" ya "Assalam-o-Alaikum" ya "kaise hain" REPEAT MAT KARO!
-- Agar customer ne pehle baat shuru kar li hai ya koi sawal poocha hai, to DIRECTLY uske sawal ka jawab do, koi welcome message dobara mat do.
+CRITICAL GREETING RULE (CHAT HISTORY AWARENESS):
+- Check the conversation history provided.
+- "Assalam-o-Alaikum! Aasane Foods me khushamdeed!" IS ONLY ALLOWED IN THE VERY FIRST MESSAGE OF A NEW CONVERSATION.
+- IF THERE IS ALREADY ANY PREVIOUS MESSAGE IN THE CHAT, IT IS STRICTLY FORBIDDEN TO SAY "Aasane Foods me khushamdeed", "Assalam-o-Alaikum", OR "kaise hain"!
+- For second, third, or any follow-up message, START DIRECTLY WITH THE ANSWER TO THE USER'S QUESTION.
 
 BRANDED PHRASING & VOCABULARY RULES:
-- NEVER SAY: "Aapko kis flavor ki zarurat hai?" or "zarurat". (Yeh unprofessional lagta hai).
-- INSTEAD USE BRANDED PHRASES: "Aap kaunsa flavor try karna chahenge?" ya "Aapko kaunse flavors chahiye?"
-- STRICTLY BANNED WORDS (INDIAN/HINDI WORDS ARE FORBIDDEN): "Swagat", "Namaste", "Dhanyawad", "Kripya", "Samagri", "Aam" etc.
+- NEVER SAY: "Aapko kis flavor ki zarurat hai?" or "zarurat".
+- ALWAYS USE: "Aap kaunsa flavor try karna chahenge?" ya "Aapko kaunse flavors chahiye?"
+- FORBIDDEN HINDI/INDIAN WORDS: "Swagat", "Namaste", "Dhanyawad", "Kripya", "Samagri", "Aam".
 - ALWAYS USE PAKISTANI WORDS: "Khushamdeed", "Shukriya", "Bhai", "Sir", "JazakAllah".
 
 EXACT 5 FLAVORS ONLY (STRICT):
 - 1) Chocolate
-- 2) Mango (NEVER write "Aam" or "آم". Always write "Mango" in Roman or "مینگو" in Urdu script)
+- 2) Mango (NEVER write "Aam" or "آم". Write "Mango" in Roman or "مینگو" in Urdu script)
 - 3) Strawberry
 - 4) Vanilla
 - 5) Pistachio / Pista (NEVER write "Kulfa")
@@ -103,7 +105,7 @@ app.post("/webhook", async (req, res) => {
     const phoneId = process.env.PHONE_NUMBER_ID ? process.env.PHONE_NUMBER_ID.trim() : "";
     const waToken = process.env.WHATSAPP_TOKEN ? process.env.WHATSAPP_TOKEN.trim() : "";
 
-    // Save timestamp for 24h follow-up
+    // Track timestamps
     lastMsgAt.set(from, Date.now());
     followupSent.set(from, false);
 
@@ -113,7 +115,7 @@ app.post("/webhook", async (req, res) => {
     if (msg.type === "text") {
       customerText = msg.text?.body;
     } 
-    // Handle Voice Note (Transcribe Voice to Text, NO VOICE REPLY)
+    // Handle Voice Note
     else if (msg.type === "audio" || msg.type === "voice") {
       console.log(`🎙️ Voice Message received from ${from}`);
       const mediaId = msg.audio?.id || msg.voice?.id;
@@ -125,9 +127,8 @@ app.post("/webhook", async (req, res) => {
         model: "whisper-1",
       });
       
-      // Treat transcribed voice as a prompt requiring Roman Urdu reply
-      customerText = `[Voice Note Transcribed]: ${transcription.text}`;
-      console.log(`📝 Transcribed Audio text: "${transcription.text}"`);
+      customerText = transcription.text;
+      console.log(`📝 Transcribed Audio text: "${customerText}"`);
       
       if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
     }
@@ -136,21 +137,36 @@ app.post("/webhook", async (req, res) => {
 
     console.log(`📩 Customer (${from}): "${customerText}"`);
 
-    // Get Text Response from ChatGPT
+    // Initialize Chat History for Memory
+    if (!chatHistories.has(from)) {
+      chatHistories.set(from, [
+        { role: "system", content: SYSTEM_PROMPT }
+      ]);
+    }
+
+    const history = chatHistories.get(from);
+    history.push({ role: "user", content: customerText });
+
+    // Keep history manageable (System prompt + last 10 messages)
+    if (history.length > 11) {
+      history.splice(1, history.length - 11);
+    }
+
+    // Get Text Response from ChatGPT with Full History Context
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: customerText }
-      ],
+      messages: history,
       max_tokens: 250,
-      temperature: 0.3,
+      temperature: 0.2,
     });
 
     const aiReply = completion.choices[0].message.content;
     console.log(`🤖 AI Text Reply: "${aiReply}"`);
 
-    // Always reply with TEXT ONLY
+    // Add AI reply to history
+    history.push({ role: "assistant", content: aiReply });
+
+    // Send WhatsApp Text Reply
     await axios.post(
       `https://graph.facebook.com/v26.0/${phoneId}/messages`,
       {
@@ -205,5 +221,5 @@ setInterval(async () => {
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Aasane Foods Text-Only Reply Bot Live on Port ${PORT}`);
+  console.log(`🚀 Aasane Foods Chat History Memory Bot Live on Port ${PORT}`);
 });
