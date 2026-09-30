@@ -12,43 +12,51 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.trim() : "" 
 });
 
-// Memory maps for follow-up system
+// Memory maps for 24-hour single follow-up
 const lastMsgAt = new Map();
 const followupSent = new Map();
 
-// Aasane Foods AI System Prompt
+// System Prompt
 const SYSTEM_PROMPT = `
-Tu "Aasane Foods" ki sales representative hai. Tu WhatsApp par Roman Urdu / English me baat karti hai.
+Tu "Aasane Foods" ki sales representative hai. Tu WhatsApp par customers se Urdu Script, Roman Urdu, ya English me baat karti hai.
 
-CRITICAL RULES:
-1. GREETING RULE: "Assalam-o-Alaikum" or greetings ONLY in the VERY FIRST message from the customer. NEVER repeat greetings or ask "kaise hain" in follow-up messages!
-2. SHORT & DIRECT REPLIES: Keep replies short (max 2-3 lines). Answer ONLY what is asked. Do not dump unnecessary information.
-3. NO BULK MENTIONS: DO NOT mention bulk bags, wholesale rates, or 535g bags UNLESS the customer specifically uses words like "bulk", "wholesale", "supplier", "bag", or "large quantity". Default product is Rs. 180 per packet.
-4. ORDER VALIDATION:
-   - Require: 1) Name, 2) Contact Number, 3) Complete Address WITH City Name.
-   - If ANY of these details (or City name) is missing, DO NOT confirm the order. Instead reply EXACTLY:
-     "Bhai ye details incomplete hain. Kindly dobara bhej dein:
-     1) Name
-     2) Contact Number
-     3) Complete Address (City ke sath)"
-   - If complete, calculate bill: Total = (Packets * 180) + DC, then give short COD summary.
+LANGUAGE & SCRIPT MATCHING RULES (CRITICAL):
+1. URDU SCRIPT: Agar customer Urdu رسم الخط (e.g. "قیمت کیا ہے؟") me likhe ya Urdu me bole, to jawab STRICTLY Urdu Script (اردو رسم الخط) me do.
+2. ROMAN URDU: Agar customer Roman Urdu (e.g. "price kya hai?") me likhe ya bole, to jawab STRICTLY Roman Urdu me do.
+3. ENGLISH: Agar customer English me likhe ya bole, to jawab STRICTLY English me do.
 
-PRICING & DELIVERY CHARGES:
-- Price: Rs. 180 per packet (Flavors: Chocolate, Vanilla, Strawberry, Mango, Kulfa)
-- Delivery Charges (DC):
-  * Karachi: 1-3 Packets = Rs. 200 | 4-5 Packets = Rs. 150
-  * Other Cities: 1-3 Packets = Rs. 250 | 4-5 Packets = Rs. 150
-- Fixed Price: Strictly Rs. 180/packet. If discount asked: "Sir 20 packets jinhon ne liye hain unko bhi 180 price lagai hai. Already price bohot kam hai."
+PRODUCT DETAILS:
+- Product: Sirf 1 hi main product hai -> "Ice Cream Mix Powder".
+- Flavors (Total 5 Flavors):
+  1) Chocolate
+  2) Mango
+  3) Strawberry
+  4) Vanilla
+  5) Pistachio (Pista / Kulfa)
+- Price: Rs. 180 per packet
+- DO NOT ask "aapko konsay product ke baray me jan-na hai". Aasane Foods ka sirf 1 hi product hai (Ice Cream Mix Powder) aur us ke 5 flavors hain.
 
-RESPONSE FORMAT:
-Return strictly a JSON object with two fields:
-{
-  "text_reply": "Short response in Roman Urdu/English for LTR text display",
-  "urdu_script": "Same response written in proper native Urdu script (اردو رسم الخط) for natural female TTS pronunciation"
-}
+RULES & GREETING:
+- Greeting ONLY in the very first message. Follow-up messages me bar bar "Assalam-o-Alaikum" ya "kaise hain" NOHI bolna.
+- Short & direct answers (max 2-3 lines). Extra information mat do.
+- Bulk/wholesale bags ki baat NOHI karni jab tak customer khud "bulk", "wholesale", "supplier" na boole.
+
+PRICING & DELIVERY CHARGES (DC):
+- Karachi: 1-3 Packets = Rs. 200 | 4-5 Packets = Rs. 150
+- Other Cities: 1-3 Packets = Rs. 250 | 4-5 Packets = Rs. 150
+- Fixed Price: Strictly Rs. 180/packet. Discount poochnay par: "Sir 20 packets jinhon ne liye hain unko bhi 180 price lagai hai. Already price bohot kam hai."
+
+ORDER VALIDATION:
+- Require 3 details: 1) Name, 2) Contact Number, 3) Complete Address WITH City Name.
+- Agar koi bhi detail (ya City Name) missing ho, to order confirm mat karo. Exactly bolo:
+  "Bhai ye details incomplete hain. Kindly dobara bhej dein:
+  1) Name
+  2) Contact Number
+  3) Complete Address (City ke sath)"
+- Complete details milnay par: Total = (Packets * 180) + DC calculate karke short COD summary do.
 `;
 
-// Helper: Download WhatsApp Audio
+// Helper: Download WhatsApp Audio Media for Whisper Transcription
 async function downloadWhatsAppMedia(mediaId, token) {
   const urlResponse = await axios.get(`https://graph.facebook.com/v26.0/${mediaId}`, {
     headers: { Authorization: `Bearer ${token}` }
@@ -61,37 +69,6 @@ async function downloadWhatsAppMedia(mediaId, token) {
   const filePath = path.join("/tmp", `${mediaId}.ogg`);
   fs.writeFileSync(filePath, Buffer.from(audioResponse.data));
   return filePath;
-}
-
-// Helper: Generate Natural Pakistani Urdu Female Audio via OpenAI TTS
-async function generateSpeechAudio(urduScriptText, filename) {
-  const speechFile = path.join("/tmp", `${filename}.mp3`);
-  const mp3 = await openai.audio.speech.create({
-    model: "tts-1-hd",
-    voice: "shimmer",
-    input: urduScriptText,
-    speed: 0.95,
-  });
-  const buffer = Buffer.from(await mp3.arrayBuffer());
-  fs.writeFileSync(speechFile, buffer);
-  return speechFile;
-}
-
-// Helper: Upload Audio to WhatsApp Media
-async function uploadMediaToWhatsApp(filePath, phoneId, token) {
-  const formData = new FormData();
-  const fileBlob = new Blob([fs.readFileSync(filePath)], { type: 'audio/mpeg' });
-  formData.append('file', fileBlob, 'response.mp3');
-  formData.append('messaging_product', 'whatsapp');
-  formData.append('type', 'audio/mpeg');
-
-  const uploadRes = await axios.post(`https://graph.facebook.com/v26.0/${phoneId}/media`, formData, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'multipart/form-data'
-    }
-  });
-  return uploadRes.data.id;
 }
 
 // 1. Webhook Verification
@@ -119,21 +96,19 @@ app.post("/webhook", async (req, res) => {
     const phoneId = process.env.PHONE_NUMBER_ID ? process.env.PHONE_NUMBER_ID.trim() : "";
     const waToken = process.env.WHATSAPP_TOKEN ? process.env.WHATSAPP_TOKEN.trim() : "";
 
-    // Track last message timestamp for 24h follow-up
+    // Save timestamp for 24h follow-up
     lastMsgAt.set(from, Date.now());
     followupSent.set(from, false);
 
     let customerText = "";
-    let isVoiceMsg = false;
 
     // Handle Text Message
     if (msg.type === "text") {
       customerText = msg.text?.body;
     } 
-    // Handle Voice Note
+    // Handle Voice Note (Transcribe Voice to Text, NO VOICE REPLY)
     else if (msg.type === "audio" || msg.type === "voice") {
-      isVoiceMsg = true;
-      console.log(`🎙️ Voice Message from ${from}`);
+      console.log(`🎙️ Voice Message received from ${from}`);
       const mediaId = msg.audio?.id || msg.voice?.id;
       
       const audioPath = await downloadWhatsAppMedia(mediaId, waToken);
@@ -144,7 +119,7 @@ app.post("/webhook", async (req, res) => {
       });
       
       customerText = transcription.text;
-      console.log(`📝 Transcribed Audio: "${customerText}"`);
+      console.log(`📝 Transcribed Audio text: "${customerText}"`);
       
       if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
     }
@@ -153,69 +128,34 @@ app.post("/webhook", async (req, res) => {
 
     console.log(`📩 Customer (${from}): "${customerText}"`);
 
-    // Get Response from ChatGPT (JSON Format)
+    // Get Text Response from ChatGPT
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
         { role: "user", content: customerText }
       ],
-      response_format: { type: "json_object" },
-      max_tokens: 200,
+      max_tokens: 250,
       temperature: 0.5,
     });
 
-    const aiReplyRaw = completion.choices[0].message.content;
-    let textReply = "";
-    let urduScriptReply = "";
+    const aiReply = completion.choices[0].message.content;
+    console.log(`🤖 AI Text Reply: "${aiReply}"`);
 
-    try {
-      const parsed = JSON.parse(aiReplyRaw);
-      textReply = parsed.text_reply || aiReplyRaw;
-      urduScriptReply = parsed.urdu_script || textReply;
-    } catch(e) {
-      textReply = aiReplyRaw;
-      urduScriptReply = aiReplyRaw;
-    }
+    // Always reply with TEXT ONLY
+    await axios.post(
+      `https://graph.facebook.com/v26.0/${phoneId}/messages`,
+      {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: from,
+        type: "text",
+        text: { body: aiReply }
+      },
+      { headers: { Authorization: `Bearer ${waToken}`, "Content-Type": "application/json" } }
+    );
 
-    console.log(`🤖 AI Text Reply: "${textReply}"`);
-
-    // IF CUSTOMER SENT VOICE NOTE -> REPLY ONLY WITH VOICE NOTE
-    if (isVoiceMsg) {
-      console.log("🎙️ Generating Female Voice Note...");
-      const speechPath = await generateSpeechAudio(urduScriptReply, `reply_${msg.id}`);
-      const audioMediaId = await uploadMediaToWhatsApp(speechPath, phoneId, waToken);
-
-      await axios.post(
-        `https://graph.facebook.com/v26.0/${phoneId}/messages`,
-        {
-          messaging_product: "whatsapp",
-          recipient_type: "individual",
-          to: from,
-          type: "audio",
-          audio: { id: audioMediaId }
-        },
-        { headers: { Authorization: `Bearer ${waToken}`, "Content-Type": "application/json" } }
-      );
-
-      if (fs.existsSync(speechPath)) fs.unlinkSync(speechPath);
-      console.log("✅ Sent Audio-Only Reply!");
-    } 
-    // IF CUSTOMER SENT TEXT -> REPLY ONLY WITH TEXT
-    else {
-      await axios.post(
-        `https://graph.facebook.com/v26.0/${phoneId}/messages`,
-        {
-          messaging_product: "whatsapp",
-          recipient_type: "individual",
-          to: from,
-          type: "text",
-          text: { body: textReply }
-        },
-        { headers: { Authorization: `Bearer ${waToken}`, "Content-Type": "application/json" } }
-      );
-      console.log("✅ Sent Text-Only Reply!");
-    }
+    console.log(`✅ Text Reply Sent to ${from}`);
 
   } catch (error) {
     console.error("❌ Error:", error.response ? JSON.stringify(error.response.data) : error.message);
@@ -257,5 +197,5 @@ setInterval(async () => {
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Aasane Foods Custom Bot Live on Port ${PORT}`);
+  console.log(`🚀 Aasane Foods Text-Only Reply Bot Live on Port ${PORT}`);
 });
