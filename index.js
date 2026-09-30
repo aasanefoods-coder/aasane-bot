@@ -4,50 +4,74 @@ const OpenAI = require("openai");
 const app = express();
 app.use(express.json());
 
-// OpenAI API Setup
+// OpenAI Setup
 const openai = new OpenAI({ 
   apiKey: process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.trim() : "" 
 });
 
-// Aasane Foods AI Prompt (Pakistani Roman Urdu Tone)
-const SYSTEM_PROMPT = `Tu "Aasane Foods" ka polite aur helpful representative hai. Tu Pakistan me Ice Cream Mix Powder Rs. 180 per pack bechta hai.
+// Aasane Foods Real Conversational DNA
+const SYSTEM_PROMPT = `
+Tu "Aasane Foods" ka owner/representative hai. Tu WhatsApp par customers se bilkul waise hi baat karta hai jaise asli owner karta hai.
 
-PRODUCT DETAILS:
-- Product: Ice Cream Mix Powder (Readymix powder)
-- Price: Rs. 180 per pack (1 pack se 1 Litre ice cream banti hai)
-- Flavors: Vanilla, Chocolate, Mango, Strawberry, Kulfa
-- Kaise Banayein: 1 pack powder ko 500ml thande doodh me mix karein, 5 min blend karein, aur freezer me 6-8 ghante jamne rakh dein.
-- Delivery: Poore Pakistan me delivery available hai (Cash on Delivery / JazzCash / EasyPaisa).
+BRAND & PRICING DETAILS:
+- Product: Aasane Premium Ice Cream Mix Powder (Soft, Thick, Creamy Texture)
+- Price: Rs. 180 per packet
+- Flavors: Chocolate, Vanilla, Strawberry, Mango, Kulfa / Pista
+- Bulk Bag Option: 535g Bag = Rs. 1,120 (Makes 8 Liters, Rs. 140 per Liter)
 
-RULES:
-- Customer se Roman Urdu / Hinglish me baat kar.
-- Chhote aur natural messages bhej.
-- Friendly tone rakh, jaise: "Aoa", "G bilkul", "Kya haal hain?".
-- Order lene ke liye customer ka Naam, Address aur City poocho.
-- Kabhi mat bol ke tu AI ya bot hai. Tu Aasane Foods ki team hai.`;
+DELIVERY CHARGES (DC) POLICY:
+- Karachi:
+  * 1 to 3 Packets: Rs. 200
+  * 4 to 5 Packets: Rs. 150
+- Other Cities (Outside Karachi):
+  * 1 to 3 Packets: Rs. 250
+  * 4 to 5 Packets: Rs. 150
 
-// 1. Webhook Verification (Meta Verification Link)
+DISCOUNT / NEGOTIATION RULES:
+- Agar customer discount maange (jaise 150 per packet lagao):
+  * Jawab: "Sir 20 packets jinhon ne liye hain unko bhi 180 price lagai hai. Already price bohot kam hai packet ki." (Strictly stick to Rs. 180).
+
+ORDER CONFIRMATION FLOW:
+1. Customer se Flavors poocho.
+2. Complete Name, Contact Number, aur Complete Address (City/Area) poocho.
+3. Total Bill Calculate karo: (Packets * 180) + Delivery Charges.
+4. Summary bhejo format me:
+   [Customer Name]
+   [Address]
+   [Phone Number]
+   
+   Cod [Total Amount]
+5. Delivery Time: "1 ya 2 working days me deliver hojae ga" (Karachi) / "2-4 working days" (Other cities).
+
+RECIPE / KAISE BANAYEIN (Jab customer poochay ya order deliver ho):
+- Doodh me powder mix karke ek ubaal dein.
+- Thanda hone tak chammach chalate rahein taake balai na jame.
+- Air-tight container me freezer me rakhein. Sabse zaroori: Base ko 100% jamayein, liquid bilkul na rahe.
+- Phir Electric Beater se 4-5 mins beat karein volume 3x hone tak. Dobara freeze karein. Ready!
+
+TONE & STYLE:
+- Mix Roman Urdu aur Urdu.
+- Politeness: "🌸 السلام علیکم 🌸 💚 Aasane Food میں خوش آمدید 💚", "Sir", "Shukriya".
+- Short, precise and clear replies.
+`;
+
+// 1. Webhook Verification
 app.get("/webhook", (req, res) => {
   const verify_token = process.env.VERIFY_TOKEN ? process.env.VERIFY_TOKEN.trim() : "aasane123secret";
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
-  if (mode && token) {
-    if (mode === "subscribe" && token === verify_token) {
-      console.log("✅ Webhook Verification Successful!");
-      res.status(200).send(challenge);
-    } else {
-      res.sendStatus(403);
-    }
+  if (mode && token && mode === "subscribe" && token === verify_token) {
+    console.log("✅ Webhook Verified!");
+    res.status(200).send(challenge);
   } else {
-    res.sendStatus(400);
+    res.sendStatus(403);
   }
 });
 
-// 2. Incoming WhatsApp Messages Handler
+// 2. Incoming Messages
 app.post("/webhook", async (req, res) => {
-  // Always respond with 200 OK to Meta immediately
   res.sendStatus(200);
 
   try {
@@ -55,32 +79,32 @@ app.post("/webhook", async (req, res) => {
     const messages = entry?.messages;
 
     if (messages && messages[0]) {
-      const from = messages[0].from; // Customer ka phone number
-      const text = messages[0].text?.body; // Customer ka message
+      const from = messages[0].from;
+      const text = messages[0].text?.body;
 
       if (!text) return;
 
-      console.log(`📩 Message from ${from}: "${text}"`);
+      console.log(`📩 Customer (${from}): "${text}"`);
 
-      // ChatGPT (OpenAI) se response mangwana
+      // ChatGPT AI Processing
       const completion = await openai.chat.completions.create({
         model: "gpt-4o-mini",
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           { role: "user", content: text }
         ],
-        max_tokens: 250,
+        max_tokens: 300,
+        temperature: 0.7,
       });
 
       const aiReply = completion.choices[0].message.content;
-      console.log(`🤖 AI Response: "${aiReply}"`);
+      console.log(`🤖 AI Reply: "${aiReply}"`);
 
-      // Clean Keys & Tokens
       const phoneId = process.env.PHONE_NUMBER_ID ? process.env.PHONE_NUMBER_ID.trim() : "";
       const waToken = process.env.WHATSAPP_TOKEN ? process.env.WHATSAPP_TOKEN.trim() : "";
 
-      // WhatsApp Cloud API v26.0 through reply bhejnah
-      const response = await axios.post(
+      // Send WhatsApp Response (v26.0)
+      await axios.post(
         `https://graph.facebook.com/v26.0/${phoneId}/messages`,
         {
           messaging_product: "whatsapp",
@@ -97,15 +121,14 @@ app.post("/webhook", async (req, res) => {
         }
       );
 
-      console.log(`✅ Message Delivered to ${from}! Status: ${response.status}`);
+      console.log(`✅ Message sent to ${from}`);
     }
   } catch (error) {
-    console.error("❌ Delivery Error:", error.response ? JSON.stringify(error.response.data) : error.message);
+    console.error("❌ Error:", error.response ? JSON.stringify(error.response.data) : error.message);
   }
 });
 
-// Server Start
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Aasane Foods Bot is Live on Port ${PORT}`);
+  console.log(`🚀 Aasane Foods Real DNA Bot Live on Port ${PORT}`);
 });
