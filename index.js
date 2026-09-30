@@ -67,8 +67,10 @@ PRODUCT & PRICING:
   * Other Cities: 1-3 Packets = Rs. 250 | 4-5 Packets = Rs. 150
 - Fixed Price: Strictly Rs. 180. Discount poochnay par: "Sir 20 packets jinhon ne liye hain unko bhi 180 price lagai hai. Already price bohot kam hai."
 
-RECIPE / HOW TO MAKE:
-- If customer asks "kaise banayein", "recipe", "tareeqa", or "banane ka tareeqa": Reply with brief instructions and mention that complete video tutorial and step-by-step recipe is being sent.
+RECIPE / HOW TO MAKE RULE (STRICT):
+- IF CUSTOMER ASKS "kaise banayein", "recipe", "tareeqa", "video", OR "banane ka tareeqa":
+- DO NOT WRITE ANY RECIPE STEPS, MILK QUANTITIES, OR INSTRUCTIONS IN "text_reply"! (Strictly forbidden to write recipe text yourself).
+- Simply set "is_recipe_requested": true and write a 1-line text_reply like: "Ji, recipe aur video tutorial ye raha:"
 
 ORDER VALIDATION & JSON OUTPUT:
 - Require 3 details: Name, Contact Number, Complete Address WITH City Name.
@@ -81,7 +83,7 @@ ORDER VALIDATION & JSON OUTPUT:
 JSON RESPONSE FORMAT:
 Return response strictly in JSON format with fields:
 {
-  "text_reply": "Message for customer",
+  "text_reply": "Short message for customer",
   "is_recipe_requested": true/false,
   "order_confirmed": true/false,
   "order_data": {
@@ -324,5 +326,5 @@ setInterval(async () => {
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Aasane Foods Video Thumbnail & Urdu Recipe Bot Live on Port ${PORT}`);
+  console.log(`🚀 Aasane Foods Strict Recipe Bot Live on Port ${PORT}`);
 });
