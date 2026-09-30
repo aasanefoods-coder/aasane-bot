@@ -12,54 +12,91 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.trim() : "" 
 });
 
-// Memory maps for Chat History & Follow-ups
+// Memory Maps
 const chatHistories = new Map();
 const lastMsgAt = new Map();
 const followupSent = new Map();
 
+// Official Recipe Details
+const YOUTUBE_VIDEO_LINK = "https://youtu.be/rqJ6iWq2BCc?si=aEufXWVM5Y9TOHuN";
+
+const RECIPE_TEXT_URDU = `🍨 صرف ایک پاؤ دودھ سے تقریباً 1 لیٹر آئس کریم بنائیں — انتہائی آسان طریقہ
+
+پیکٹ میں 2 پاؤچ ہوتے ہیں:
+• آئس کریم پاؤڈر
+• فلیور ساشے
+
+1️⃣ آئس کریم پاؤڈر کو ایک پاؤ بہترین کوالٹی کے کھلے دودھ میں اچھی طرح مکس کریں تاکہ کوئی بھی گھٹلی (Lumps) باقی نہ رہے۔
+2️⃣ درمیانی آنچ پر مکسچر کو صرف ایک مکمل ابال دیں، جیسے دودھ کو ایک ابال دیا جاتا ہے۔ اسے پکانا نہیں ہے۔
+3️⃣ مکسچر کو ٹھنڈا کریں، لیکن وقفے وقفے سے چمچ یا وسک (Whisk) چلاتے رہیں تاکہ اوپر بالائی نہ جمے، اور پتیلی کی سائیڈوں پر جمنے والے بیس (Base) کو بھی مکسچر میں یکجان کرتے رہیں۔
+4️⃣ بیس (Base) کو کسی بھی ایئر ٹائٹ کنٹینر میں ڈال کر ڈیپ فریزر میں مکمل جمنے تک رکھیں۔
+5️⃣ آئس کریم بیس (Ice Cream Base) کو باؤل میں نکالیں، فلیور شامل کریں۔
+6️⃣ الیکٹرک بیٹر سے 4 سے 5 منٹ یا آئس کریم کا والیوم تقریباً 3 گنا ہونے تک فل اسپیڈ پر بیٹ کریں۔
+7️⃣ آئس کریم کو پلاسٹک یا شیشے کے ایئر ٹائٹ کنٹینر میں ڈال کر دوبارہ 4 سے 5 گھنٹے کے لیے ڈیپ فریزر میں رکھ دیں۔
+
+🍨 مزیدار، کریمی اور برانڈ لیول آئس کریم تیار ہے۔
+
+⚠️ نوٹ:
+- پتیلی کی سائیڈوں پر جمنے والے بیس کو بھی مکسچر میں یکجان کریں۔
+- بیٹ کرنے سے پہلے یقینی بنائیں کہ بیس مکمل جما ہوا ہو، اس میں ذرا سا بھی لیکوئیڈ (Liquid) باقی نہ ہو۔`;
+
 // System Prompt
 const SYSTEM_PROMPT = `
-Tu "Aasane Foods" (Pakistan) ki polite aur professional sales representative hai. Tu WhatsApp par Pakistani Roman Urdu, Urdu Script, ya English me baat karti hai.
+Tu "Aasane Foods" (Pakistan) ki sales representative hai. Tu WhatsApp par Roman Urdu, Urdu Script, ya English me baat karti hai.
 
-CRITICAL PHRASING RULES (FLAVORS & AVAILABILITY):
-- Jab customer pooche "konse flavors hain" ya "flavors available hain?", ALWAYS reply naturally: "Hamare paas ye 5 flavors available hain:"
-- NEVER SAY "Aapko 5 flavors chahiye" or assume what customer needs!
-- DO NOT say "Aasane Foods me khushamdeed" or "Assalam-o-Alaikum" if you are already chatting in follow-up messages!
+GREETING RULES:
+- "Assalam-o-Alaikum! Aasane Foods me khushamdeed!" ONLY AND ONLY IN THE VERY FIRST MESSAGE.
+- NEVER repeat greetings or "Aasane Foods me khushamdeed" in follow-up chats.
 
 BRANDED PHRASING & VOCABULARY RULES:
-- NEVER SAY: "Aapko kis flavor ki zarurat hai?" or "zarurat".
-- ALWAYS USE: "Aap kaunsa flavor try karna chahenge?" ya "Aapko kaunse flavors chahiye?"
+- NEVER SAY "zarurat hai". Always use: "Aap kaunsa flavor try karna chahenge?"
 - FORBIDDEN HINDI/INDIAN WORDS: "Swagat", "Namaste", "Dhanyawad", "Kripya", "Samagri", "Aam".
 - ALWAYS USE PAKISTANI WORDS: "Khushamdeed", "Shukriya", "Bhai", "Sir", "JazakAllah".
 
-EXACT 5 FLAVORS ONLY (STRICT):
+EXACT 5 FLAVORS ONLY:
 - 1) Chocolate
-- 2) Mango (NEVER write "Aam" or "آم". Write "Mango" in Roman or "مینگو" in Urdu script)
+- 2) Mango (Never write "Aam" or "آم", write "Mango" or "مینگو")
 - 3) Strawberry
 - 4) Vanilla
-- 5) Pistachio / Pista (NEVER write "Kulfa")
+- 5) Pistachio / Pista (Never write "Kulfa")
 
-PRODUCT DETAILS:
-- Single main product: "Ice Cream Mix Powder" (Price: Rs. 180 per packet).
-- NEVER ask "aapko konsay product ke baray me jan-na hai". There is ONLY ONE product (Ice Cream Mix Powder) which comes in 5 flavors.
+PRODUCT & PRICING:
+- Main Product: "Ice Cream Mix Powder" (Price: Rs. 180 per packet).
+- Delivery Charges (DC):
+  * Karachi: 1-3 Packets = Rs. 200 | 4-5 Packets = Rs. 150
+  * Other Cities: 1-3 Packets = Rs. 250 | 4-5 Packets = Rs. 150
+- Fixed Price: Strictly Rs. 180. Discount poochnay par: "Sir 20 packets jinhon ne liye hain unko bhi 180 price lagai hai. Already price bohot kam hai."
 
-PRICING & DELIVERY CHARGES (DC):
-- Price: Rs. 180 per packet
-- Karachi: 1-3 Packets = Rs. 200 | 4-5 Packets = Rs. 150
-- Other Cities: 1-3 Packets = Rs. 250 | 4-5 Packets = Rs. 150
-- Fixed Price: Strictly Rs. 180/packet. Discount poochnay par: "Sir 20 packets jinhon ne liye hain unko bhi 180 price lagai hai. Already price bohot kam hai."
+RECIPE / HOW TO MAKE:
+- If customer asks "kaise banayein", "recipe", "tareeqa", or "banane ka tareeqa": Reply with brief instructions and mention that complete video tutorial and step-by-step recipe is being sent.
 
-ORDER VALIDATION:
-- Require 3 details: 1) Name, 2) Contact Number, 3) Complete Address WITH City Name.
-- Agar koi bhi detail (ya City Name) missing ho, to order confirm mat karo. Exactly bolo:
+ORDER VALIDATION & JSON OUTPUT:
+- Require 3 details: Name, Contact Number, Complete Address WITH City Name.
+- If ANY detail (or City Name) is missing, DO NOT confirm order. Say:
   "Bhai ye details incomplete hain. Kindly dobara bhej dein:
   1) Name
   2) Contact Number
   3) Complete Address (City ke sath)"
-- Complete details milnay par: Total = (Packets * 180) + DC calculate karke short COD summary do.
+
+JSON RESPONSE FORMAT:
+Return response strictly in JSON format with fields:
+{
+  "text_reply": "Message for customer",
+  "is_recipe_requested": true/false,
+  "order_confirmed": true/false,
+  "order_data": {
+    "name": "Customer Name",
+    "phone": "Customer Phone",
+    "address": "Full Address",
+    "city": "City Name",
+    "packets": 4,
+    "cod": 870,
+    "dc": 150
+  }
+}
 `;
 
-// Helper: Download WhatsApp Audio Media for Whisper Transcription
+// Helper: Download WhatsApp Audio
 async function downloadWhatsAppMedia(mediaId, token) {
   const urlResponse = await axios.get(`https://graph.facebook.com/v26.0/${mediaId}`, {
     headers: { Authorization: `Bearer ${token}` }
@@ -98,8 +135,11 @@ app.post("/webhook", async (req, res) => {
     const from = msg.from;
     const phoneId = process.env.PHONE_NUMBER_ID ? process.env.PHONE_NUMBER_ID.trim() : "";
     const waToken = process.env.WHATSAPP_TOKEN ? process.env.WHATSAPP_TOKEN.trim() : "";
+    const sheetScriptUrl = process.env.GOOGLE_SHEET_SCRIPT_URL ? process.env.GOOGLE_SHEET_SCRIPT_URL.trim() : "";
+    const imageUrl = process.env.PRODUCT_IMAGE_URL ? process.env.PRODUCT_IMAGE_URL.trim() : "";
 
-    // Track timestamps
+    const isFirstTimeUser = !chatHistories.has(from);
+
     lastMsgAt.set(from, Date.now());
     followupSent.set(from, false);
 
@@ -113,7 +153,6 @@ app.post("/webhook", async (req, res) => {
     else if (msg.type === "audio" || msg.type === "voice") {
       console.log(`🎙️ Voice Message received from ${from}`);
       const mediaId = msg.audio?.id || msg.voice?.id;
-      
       const audioPath = await downloadWhatsAppMedia(mediaId, waToken);
       
       const transcription = await openai.audio.transcriptions.create({
@@ -123,7 +162,6 @@ app.post("/webhook", async (req, res) => {
       
       customerText = transcription.text;
       console.log(`📝 Transcribed Audio text: "${customerText}"`);
-      
       if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
     }
 
@@ -131,7 +169,28 @@ app.post("/webhook", async (req, res) => {
 
     console.log(`📩 Customer (${from}): "${customerText}"`);
 
-    // Initialize Chat History for Memory
+    // If First Time User or User asks for Photo -> Send Product Image Direct
+    if (isFirstTimeUser || /photo|picture|pic|image|tasveer/i.test(customerText)) {
+      if (imageUrl) {
+        console.log("🖼️ Sending Product Image...");
+        await axios.post(
+          `https://graph.facebook.com/v26.0/${phoneId}/messages`,
+          {
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to: from,
+            type: "image",
+            image: { 
+              link: imageUrl,
+              caption: "🍦 Aasane Premium Ice Cream Mix Powder\nPure Milk rich Creamy Texture!" 
+            }
+          },
+          { headers: { Authorization: `Bearer ${waToken}`, "Content-Type": "application/json" } }
+        ).catch(e => console.error("Image send error:", e.message));
+      }
+    }
+
+    // Initialize Chat History
     if (!chatHistories.has(from)) {
       chatHistories.set(from, [
         { role: "system", content: SYSTEM_PROMPT }
@@ -145,18 +204,28 @@ app.post("/webhook", async (req, res) => {
       history.splice(1, history.length - 11);
     }
 
-    // Get Text Response from ChatGPT
+    // Get Structured Response from ChatGPT
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: history,
-      max_tokens: 250,
-      temperature: 0.1,
+      response_format: { type: "json_object" },
+      max_tokens: 350,
+      temperature: 0.2,
     });
 
-    const aiReply = completion.choices[0].message.content;
-    console.log(`🤖 AI Text Reply: "${aiReply}"`);
+    const aiReplyRaw = completion.choices[0].message.content;
+    let textReply = "";
+    let parsedData = {};
 
-    history.push({ role: "assistant", content: aiReply });
+    try {
+      parsedData = JSON.parse(aiReplyRaw);
+      textReply = parsedData.text_reply || aiReplyRaw;
+    } catch(e) {
+      textReply = aiReplyRaw;
+    }
+
+    console.log(`🤖 AI Reply: "${textReply}"`);
+    history.push({ role: "assistant", content: textReply });
 
     // Send WhatsApp Text Reply
     await axios.post(
@@ -166,19 +235,61 @@ app.post("/webhook", async (req, res) => {
         recipient_type: "individual",
         to: from,
         type: "text",
-        text: { body: aiReply }
+        text: { body: textReply }
       },
       { headers: { Authorization: `Bearer ${waToken}`, "Content-Type": "application/json" } }
     );
 
-    console.log(`✅ Text Reply Sent to ${from}`);
+    // If Recipe Requested -> Send Video Link with Thumbnail Preview FIRST, then Detailed Urdu Text
+    if (parsedData.is_recipe_requested || /recipe|banane ka|tareeqa|kaise banaye/i.test(customerText)) {
+      console.log("🎥 Sending Recipe Video Link with Thumbnail Preview...");
+      
+      // 1. Send YouTube Video Link Message (preview_url: true enables Thumbnail)
+      await axios.post(
+        `https://graph.facebook.com/v26.0/${phoneId}/messages`,
+        {
+          messaging_product: "whatsapp",
+          recipient_type: "individual",
+          to: from,
+          type: "text",
+          text: { 
+            preview_url: true,
+            body: `🎥 *Aasane Ice Cream Banane Ka Complete Video Tutorial:*\n${YOUTUBE_VIDEO_LINK}`
+          }
+        },
+        { headers: { Authorization: `Bearer ${waToken}`, "Content-Type": "application/json" } }
+      );
+
+      console.log("📜 Sending Detailed Urdu Recipe Text...");
+      
+      // 2. Send Detailed Urdu Recipe Text Message
+      await axios.post(
+        `https://graph.facebook.com/v26.0/${phoneId}/messages`,
+        {
+          messaging_product: "whatsapp",
+          recipient_type: "individual",
+          to: from,
+          type: "text",
+          text: { body: RECIPE_TEXT_URDU }
+        },
+        { headers: { Authorization: `Bearer ${waToken}`, "Content-Type": "application/json" } }
+      );
+    }
+
+    // If Order Confirmed -> Auto Save to Google Sheet
+    if (parsedData.order_confirmed && parsedData.order_data && sheetScriptUrl) {
+      console.log("📊 Saving Order to Google Sheet...");
+      await axios.post(sheetScriptUrl, parsedData.order_data)
+        .then(() => console.log("✅ Order Auto-Saved to Google Sheet!"))
+        .catch(err => console.error("❌ Google Sheet Save Error:", err.message));
+    }
 
   } catch (error) {
     console.error("❌ Error:", error.response ? JSON.stringify(error.response.data) : error.message);
   }
 });
 
-// Single Follow-Up Worker
+// Single Follow-Up Worker (24h Inactive)
 setInterval(async () => {
   try {
     const now = Date.now();
@@ -213,5 +324,5 @@ setInterval(async () => {
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Aasane Foods Natural Phrasing Bot Live on Port ${PORT}`);
+  console.log(`🚀 Aasane Foods Video Thumbnail & Urdu Recipe Bot Live on Port ${PORT}`);
 });
