@@ -1,6 +1,8 @@
 const express = require("express");
 const axios = require("axios");
 const OpenAI = require("openai");
+const fs = require("fs");
+const path = require("path");
 const app = express();
 app.use(express.json());
 
@@ -9,9 +11,14 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.trim() : "" 
 });
 
-// Aasane Foods Real Conversational DNA
+// Aasane Foods AI Prompt (Strictly Left-to-Right Formatting)
 const SYSTEM_PROMPT = `
-Tu "Aasane Foods" ka owner/representative hai. Tu WhatsApp par customers se bilkul waise hi baat karta hai jaise asli owner karta hai.
+Tu "Aasane Foods" ka owner/representative hai. Tu WhatsApp par customers se Urdu / Roman Urdu / English me baat karta hai.
+
+LANGUAGE & FORMATTING RULES (VERY IMPORTANT):
+- DO NOT use Urdu/Arabic script (like السلام علیکم). ONLY use Latin/English letters so text aligns Left-To-Right (LTR).
+- Example Greeting: "Assalam-o-Alaikum! Aasane Foods me khushamdeed!"
+- MULTILINGUAL: If the customer writes or speaks in ENGLISH, reply in natural ENGLISH. If the customer speaks/writes in Roman Urdu, reply in natural ROMAN URDU.
 
 BRAND & PRICING DETAILS:
 - Product: Aasane Premium Ice Cream Mix Powder (Soft, Thick, Creamy Texture)
@@ -28,101 +35,182 @@ DELIVERY CHARGES (DC) POLICY:
   * 4 to 5 Packets: Rs. 150
 
 DISCOUNT / NEGOTIATION RULES:
-- Agar customer discount maange (jaise 150 per packet lagao):
-  * Jawab: "Sir 20 packets jinhon ne liye hain unko bhi 180 price lagai hai. Already price bohot kam hai packet ki." (Strictly stick to Rs. 180).
+- If customer asks for discount (e.g. 150 per packet):
+  * Reply: "Sir 20 packets jinhon ne liye hain unko bhi 180 price lagai hai. Already price bohot kam hai packet ki." (Strictly stick to Rs. 180).
 
 ORDER CONFIRMATION FLOW:
-1. Customer se Flavors poocho.
-2. Complete Name, Contact Number, aur Complete Address (City/Area) poocho.
-3. Total Bill Calculate karo: (Packets * 180) + Delivery Charges.
-4. Summary bhejo format me:
+1. Ask for Flavors.
+2. Ask for Name, Contact Number, and Full Address (City/Area).
+3. Calculate Total: (Packets * 180) + Delivery Charges.
+4. Send Summary:
    [Customer Name]
    [Address]
    [Phone Number]
    
    Cod [Total Amount]
-5. Delivery Time: "1 ya 2 working days me deliver hojae ga" (Karachi) / "2-4 working days" (Other cities).
+5. Delivery Time: "1 ya 2 working days" (Karachi) / "2-4 working days" (Other cities).
 
-RECIPE / KAISE BANAYEIN (Jab customer poochay ya order deliver ho):
-- Doodh me powder mix karke ek ubaal dein.
-- Thanda hone tak chammach chalate rahein taake balai na jame.
-- Air-tight container me freezer me rakhein. Sabse zaroori: Base ko 100% jamayein, liquid bilkul na rahe.
-- Phir Electric Beater se 4-5 mins beat karein volume 3x hone tak. Dobara freeze karein. Ready!
-
-TONE & STYLE:
-- Mix Roman Urdu aur Urdu.
-- Politeness: "🌸 السلام علیکم 🌸 💚 Aasane Food میں خوش آمدید 💚", "Sir", "Shukriya".
-- Short, precise and clear replies.
+RECIPE / KAISE BANAYEIN:
+- Doodh me powder mix karke ubaal dein.
+- Thanda hone tak chammach chalate rahein.
+- Air-tight container me freeze karein. Base ko 100% freeze karein (no liquid).
+- Phir Electric Beater se 4-5 mins beat karein (3x volume). Re-freeze. Ready!
 `;
+
+// Helper: Download WhatsApp Audio Media
+async function downloadWhatsAppMedia(mediaId, token) {
+  const urlResponse = await axios.get(`https://graph.facebook.com/v26.0/${mediaId}`, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  const mediaUrl = urlResponse.data.url;
+  const audioResponse = await axios.get(mediaUrl, {
+    responseType: 'arraybuffer',
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  const filePath = path.join("/tmp", `${mediaId}.ogg`);
+  fs.writeFileSync(filePath, Buffer.from(audioResponse.data));
+  return filePath;
+}
+
+// Helper: Convert Text to Audio using OpenAI TTS
+async function generateSpeechAudio(text, filename) {
+  const speechFile = path.join("/tmp", `${filename}.mp3`);
+  const mp3 = await openai.audio.speech.create({
+    model: "tts-1",
+    voice: "alloy", // Friendly natural voice
+    input: text,
+  });
+  const buffer = Buffer.from(await mp3.arrayBuffer());
+  fs.writeFileSync(speechFile, buffer);
+  return speechFile;
+}
+
+// Helper: Upload Audio to WhatsApp Media
+async function uploadMediaToWhatsApp(filePath, phoneId, token) {
+  const formData = new FormData();
+  const fileBlob = new Blob([fs.readFileSync(filePath)], { type: 'audio/mpeg' });
+  formData.append('file', fileBlob, 'response.mp3');
+  formData.append('messaging_product', 'whatsapp');
+  formData.append('type', 'audio/mpeg');
+
+  const uploadRes = await axios.post(`https://graph.facebook.com/v26.0/${phoneId}/media`, formData, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'multipart/form-data'
+    }
+  });
+  return uploadRes.data.id;
+}
 
 // 1. Webhook Verification
 app.get("/webhook", (req, res) => {
   const verify_token = process.env.VERIFY_TOKEN ? process.env.VERIFY_TOKEN.trim() : "aasane123secret";
-  const mode = req.query["hub.mode"];
-  const token = req.query["hub.verify_token"];
-  const challenge = req.query["hub.challenge"];
-
-  if (mode && token && mode === "subscribe" && token === verify_token) {
+  if (req.query["hub.mode"] === "subscribe" && req.query["hub.verify_token"] === verify_token) {
     console.log("✅ Webhook Verified!");
-    res.status(200).send(challenge);
+    res.status(200).send(req.query["hub.challenge"]);
   } else {
     res.sendStatus(403);
   }
 });
 
-// 2. Incoming Messages
+// 2. Incoming Messages (Text & Voice Notes)
 app.post("/webhook", async (req, res) => {
   res.sendStatus(200);
 
   try {
     const entry = req.body.entry?.[0]?.changes?.[0]?.value;
-    const messages = entry?.messages;
+    const msg = entry?.messages?.[0];
 
-    if (messages && messages[0]) {
-      const from = messages[0].from;
-      const text = messages[0].text?.body;
+    if (!msg) return;
 
-      if (!text) return;
+    const from = msg.from;
+    const phoneId = process.env.PHONE_NUMBER_ID ? process.env.PHONE_NUMBER_ID.trim() : "";
+    const waToken = process.env.WHATSAPP_TOKEN ? process.env.WHATSAPP_TOKEN.trim() : "";
 
-      console.log(`📩 Customer (${from}): "${text}"`);
+    let customerText = "";
+    let isVoiceMsg = false;
 
-      // ChatGPT AI Processing
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: text }
-        ],
-        max_tokens: 300,
-        temperature: 0.7,
+    // Handle Text Message
+    if (msg.type === "text") {
+      customerText = msg.text?.body;
+    } 
+    // Handle Voice Message (Audio)
+    else if (msg.type === "audio" || msg.type === "voice") {
+      isVoiceMsg = true;
+      console.log(`🎙️ Voice Message received from ${from}`);
+      const mediaId = msg.audio?.id || msg.voice?.id;
+      
+      // Step A: Download Audio
+      const audioPath = await downloadWhatsAppMedia(mediaId, waToken);
+      
+      // Step B: Transcribe Voice to Text via OpenAI Whisper
+      const transcription = await openai.audio.transcriptions.create({
+        file: fs.createReadStream(audioPath),
+        model: "whisper-1",
       });
+      
+      customerText = transcription.text;
+      console.log(`📝 Transcribed Audio: "${customerText}"`);
+      
+      // Cleanup temp file
+      if (fs.existsSync(audioPath)) fs.unlinkSync(audioPath);
+    }
 
-      const aiReply = completion.choices[0].message.content;
-      console.log(`🤖 AI Reply: "${aiReply}"`);
+    if (!customerText) return;
 
-      const phoneId = process.env.PHONE_NUMBER_ID ? process.env.PHONE_NUMBER_ID.trim() : "";
-      const waToken = process.env.WHATSAPP_TOKEN ? process.env.WHATSAPP_TOKEN.trim() : "";
+    console.log(`📩 Processing (${from}): "${customerText}"`);
 
-      // Send WhatsApp Response (v26.0)
+    // Step C: Generate AI Response from ChatGPT
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: customerText }
+      ],
+      max_tokens: 300,
+      temperature: 0.7,
+    });
+
+    const aiReply = completion.choices[0].message.content;
+    console.log(`🤖 AI Reply: "${aiReply}"`);
+
+    // Step D: Send Text Reply
+    await axios.post(
+      `https://graph.facebook.com/v26.0/${phoneId}/messages`,
+      {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: from,
+        type: "text",
+        text: { body: aiReply }
+      },
+      { headers: { Authorization: `Bearer ${waToken}`, "Content-Type": "application/json" } }
+    );
+
+    // Step E: If Customer sent Voice Note, reply with a Voice Note too!
+    if (isVoiceMsg) {
+      console.log("🎙️ Generating Voice Note Reply...");
+      const speechPath = await generateSpeechAudio(aiReply, `reply_${msg.id}`);
+      const audioMediaId = await uploadMediaToWhatsApp(speechPath, phoneId, waToken);
+
+      // Send Audio Message
       await axios.post(
         `https://graph.facebook.com/v26.0/${phoneId}/messages`,
         {
           messaging_product: "whatsapp",
           recipient_type: "individual",
           to: from,
-          type: "text",
-          text: { body: aiReply }
+          type: "audio",
+          audio: { id: audioMediaId }
         },
-        {
-          headers: {
-            Authorization: `Bearer ${waToken}`,
-            "Content-Type": "application/json"
-          }
-        }
+        { headers: { Authorization: `Bearer ${waToken}`, "Content-Type": "application/json" } }
       );
 
-      console.log(`✅ Message sent to ${from}`);
+      // Cleanup temp audio file
+      if (fs.existsSync(speechPath)) fs.unlinkSync(speechPath);
+      console.log("✅ Voice Note Sent!");
     }
+
   } catch (error) {
     console.error("❌ Error:", error.response ? JSON.stringify(error.response.data) : error.message);
   }
@@ -130,5 +218,5 @@ app.post("/webhook", async (req, res) => {
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Aasane Foods Real DNA Bot Live on Port ${PORT}`);
+  console.log(`🚀 Aasane Foods Voice & LTR Text Bot Live on Port ${PORT}`);
 });
