@@ -12,7 +12,7 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.trim() : "" 
 });
 
-// Memory maps for Chat History (Prevents repeated greetings)
+// Memory maps for Chat History & Follow-ups
 const chatHistories = new Map();
 const lastMsgAt = new Map();
 const followupSent = new Map();
@@ -21,11 +21,10 @@ const followupSent = new Map();
 const SYSTEM_PROMPT = `
 Tu "Aasane Foods" (Pakistan) ki polite aur professional sales representative hai. Tu WhatsApp par Pakistani Roman Urdu, Urdu Script, ya English me baat karti hai.
 
-CRITICAL GREETING RULE (CHAT HISTORY AWARENESS):
-- Check the conversation history provided.
-- "Assalam-o-Alaikum! Aasane Foods me khushamdeed!" IS ONLY ALLOWED IN THE VERY FIRST MESSAGE OF A NEW CONVERSATION.
-- IF THERE IS ALREADY ANY PREVIOUS MESSAGE IN THE CHAT, IT IS STRICTLY FORBIDDEN TO SAY "Aasane Foods me khushamdeed", "Assalam-o-Alaikum", OR "kaise hain"!
-- For second, third, or any follow-up message, START DIRECTLY WITH THE ANSWER TO THE USER'S QUESTION.
+CRITICAL PHRASING RULES (FLAVORS & AVAILABILITY):
+- Jab customer pooche "konse flavors hain" ya "flavors available hain?", ALWAYS reply naturally: "Hamare paas ye 5 flavors available hain:"
+- NEVER SAY "Aapko 5 flavors chahiye" or assume what customer needs!
+- DO NOT say "Aasane Foods me khushamdeed" or "Assalam-o-Alaikum" if you are already chatting in follow-up messages!
 
 BRANDED PHRASING & VOCABULARY RULES:
 - NEVER SAY: "Aapko kis flavor ki zarurat hai?" or "zarurat".
@@ -43,11 +42,6 @@ EXACT 5 FLAVORS ONLY (STRICT):
 PRODUCT DETAILS:
 - Single main product: "Ice Cream Mix Powder" (Price: Rs. 180 per packet).
 - NEVER ask "aapko konsay product ke baray me jan-na hai". There is ONLY ONE product (Ice Cream Mix Powder) which comes in 5 flavors.
-
-SCRIPT & LANGUAGE SELECTION:
-- VOICE NOTES & ROMAN URDU TYPED: Reply strictly in PAKISTANI ROMAN URDU.
-- TYPED URDU SCRIPT: Reply in Urdu Script (اردو) using Pakistani words ("مینگو" for Mango, "پستہ" for Pista).
-- TYPED ENGLISH: Reply in English.
 
 PRICING & DELIVERY CHARGES (DC):
 - Price: Rs. 180 per packet
@@ -147,23 +141,21 @@ app.post("/webhook", async (req, res) => {
     const history = chatHistories.get(from);
     history.push({ role: "user", content: customerText });
 
-    // Keep history manageable (System prompt + last 10 messages)
     if (history.length > 11) {
       history.splice(1, history.length - 11);
     }
 
-    // Get Text Response from ChatGPT with Full History Context
+    // Get Text Response from ChatGPT
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: history,
       max_tokens: 250,
-      temperature: 0.2,
+      temperature: 0.1,
     });
 
     const aiReply = completion.choices[0].message.content;
     console.log(`🤖 AI Text Reply: "${aiReply}"`);
 
-    // Add AI reply to history
     history.push({ role: "assistant", content: aiReply });
 
     // Send WhatsApp Text Reply
@@ -186,7 +178,7 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-// Single Follow-Up Worker (Checks every hour for 24-hour inactive customers, sends only ONCE)
+// Single Follow-Up Worker
 setInterval(async () => {
   try {
     const now = Date.now();
@@ -221,5 +213,5 @@ setInterval(async () => {
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Aasane Foods Chat History Memory Bot Live on Port ${PORT}`);
+  console.log(`🚀 Aasane Foods Natural Phrasing Bot Live on Port ${PORT}`);
 });
