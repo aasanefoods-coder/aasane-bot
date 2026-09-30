@@ -3,6 +3,7 @@ const axios = require("axios");
 const OpenAI = require("openai");
 const fs = require("fs");
 const path = require("path");
+
 const app = express();
 app.use(express.json());
 
@@ -11,42 +12,43 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY ? process.env.OPENAI_API_KEY.trim() : "" 
 });
 
-// Aasane Foods AI Prompt (Pakistani Female Tone & LTR/Voice Rules)
+// Memory maps for follow-up system
+const lastMsgAt = new Map();
+const followupSent = new Map();
+
+// Aasane Foods AI System Prompt
 const SYSTEM_PROMPT = `
-Tu "Aasane Foods" ki female sales representative hai. Tu WhatsApp par Urdu / Roman Urdu / English me baat karti hai.
+Tu "Aasane Foods" ki sales representative hai. Tu WhatsApp par Roman Urdu / English me baat karti hai.
 
-GREETING RULES (VERY IMPORTANT):
-- DO NOT say "Assalam-o-Alaikum" or "Kaise hain aap" in every message! ONLY greet if it is the VERY FIRST message from the user.
-- For follow-up questions (like price, DC, recipe, flavors), DIRECTLY answer the question without repeating any greeting or asking "kaise hain"!
+CRITICAL RULES:
+1. GREETING RULE: "Assalam-o-Alaikum" or greetings ONLY in the VERY FIRST message from the customer. NEVER repeat greetings or ask "kaise hain" in follow-up messages!
+2. SHORT & DIRECT REPLIES: Keep replies short (max 2-3 lines). Answer ONLY what is asked. Do not dump unnecessary information.
+3. NO BULK MENTIONS: DO NOT mention bulk bags, wholesale rates, or 535g bags UNLESS the customer specifically uses words like "bulk", "wholesale", "supplier", "bag", or "large quantity". Default product is Rs. 180 per packet.
+4. ORDER VALIDATION:
+   - Require: 1) Name, 2) Contact Number, 3) Complete Address WITH City Name.
+   - If ANY of these details (or City name) is missing, DO NOT confirm the order. Instead reply EXACTLY:
+     "Bhai ye details incomplete hain. Kindly dobara bhej dein:
+     1) Name
+     2) Contact Number
+     3) Complete Address (City ke sath)"
+   - If complete, calculate bill: Total = (Packets * 180) + DC, then give short COD summary.
 
-FORMATTING & RESPONSE RULES:
-- Return your response strictly in JSON format with two fields:
-  {
-    "text_reply": "Your message in Roman Urdu or English (Left-To-Right text, no Urdu script here)",
-    "urdu_script": "Same message written in proper Urdu script (اردو رسم الخط) so Pakistani Female TTS pronounces it naturally."
-  }
+PRICING & DELIVERY CHARGES:
+- Price: Rs. 180 per packet (Flavors: Chocolate, Vanilla, Strawberry, Mango, Kulfa)
+- Delivery Charges (DC):
+  * Karachi: 1-3 Packets = Rs. 200 | 4-5 Packets = Rs. 150
+  * Other Cities: 1-3 Packets = Rs. 250 | 4-5 Packets = Rs. 150
+- Fixed Price: Strictly Rs. 180/packet. If discount asked: "Sir 20 packets jinhon ne liye hain unko bhi 180 price lagai hai. Already price bohot kam hai."
 
-BRAND & PRICING DETAILS:
-- Product: Aasane Premium Ice Cream Mix Powder (Soft, Thick, Creamy Texture)
-- Price: Rs. 180 per packet
-- Flavors: Chocolate, Vanilla, Strawberry, Mango, Kulfa / Pista
-- Bulk Bag Option: 535g Bag = Rs. 1,120 (Makes 8 Liters, Rs. 140 per Liter)
-
-DELIVERY CHARGES (DC) POLICY:
-- Karachi: 1-3 Packets = Rs. 200 | 4-5 Packets = Rs. 150
-- Other Cities: 1-3 Packets = Rs. 250 | 4-5 Packets = Rs. 150
-
-DISCOUNT / NEGOTIATION:
-- Strictly stick to Rs. 180 per packet. "Sir 20 packets jinhon ne liye hain unko bhi 180 price lagai hai. Already price bohot kam hai."
-
-ORDER CONFIRMATION FLOW:
-- Ask Flavors -> Ask Name, Phone & Full Address -> Send COD Summary.
-
-RECIPE:
-- Doodh me mix karke ubaal dein -> Thanda hone tak chammach chalayein -> Air-tight container me 100% freeze karein (no liquid) -> Electric beater se 4-5 min beat karein -> Re-freeze.
+RESPONSE FORMAT:
+Return strictly a JSON object with two fields:
+{
+  "text_reply": "Short response in Roman Urdu/English for LTR text display",
+  "urdu_script": "Same response written in proper native Urdu script (اردو رسم الخط) for natural female TTS pronunciation"
+}
 `;
 
-// Helper: Download WhatsApp Audio Media
+// Helper: Download WhatsApp Audio
 async function downloadWhatsAppMedia(mediaId, token) {
   const urlResponse = await axios.get(`https://graph.facebook.com/v26.0/${mediaId}`, {
     headers: { Authorization: `Bearer ${token}` }
@@ -61,13 +63,14 @@ async function downloadWhatsAppMedia(mediaId, token) {
   return filePath;
 }
 
-// Helper: Generate Speech Audio using OpenAI's Pakistani Female Voice (Nova + Urdu Script)
+// Helper: Generate Natural Pakistani Urdu Female Audio via OpenAI TTS
 async function generateSpeechAudio(urduScriptText, filename) {
   const speechFile = path.join("/tmp", `${filename}.mp3`);
   const mp3 = await openai.audio.speech.create({
-    model: "tts-1",
-    voice: "nova", // Soft, natural female voice
-    input: urduScriptText, // Feeding native Urdu script gives native Pakistani Urdu accent!
+    model: "tts-1-hd",
+    voice: "shimmer",
+    input: urduScriptText,
+    speed: 0.95,
   });
   const buffer = Buffer.from(await mp3.arrayBuffer());
   fs.writeFileSync(speechFile, buffer);
@@ -116,6 +119,10 @@ app.post("/webhook", async (req, res) => {
     const phoneId = process.env.PHONE_NUMBER_ID ? process.env.PHONE_NUMBER_ID.trim() : "";
     const waToken = process.env.WHATSAPP_TOKEN ? process.env.WHATSAPP_TOKEN.trim() : "";
 
+    // Track last message timestamp for 24h follow-up
+    lastMsgAt.set(from, Date.now());
+    followupSent.set(from, false);
+
     let customerText = "";
     let isVoiceMsg = false;
 
@@ -144,7 +151,7 @@ app.post("/webhook", async (req, res) => {
 
     if (!customerText) return;
 
-    console.log(`📩 Customer Text: "${customerText}"`);
+    console.log(`📩 Customer (${from}): "${customerText}"`);
 
     // Get Response from ChatGPT (JSON Format)
     const completion = await openai.chat.completions.create({
@@ -154,8 +161,8 @@ app.post("/webhook", async (req, res) => {
         { role: "user", content: customerText }
       ],
       response_format: { type: "json_object" },
-      max_tokens: 350,
-      temperature: 0.6,
+      max_tokens: 200,
+      temperature: 0.5,
     });
 
     const aiReplyRaw = completion.choices[0].message.content;
@@ -171,11 +178,11 @@ app.post("/webhook", async (req, res) => {
       urduScriptReply = aiReplyRaw;
     }
 
-    console.log(`🤖 Text Reply: "${textReply}"`);
+    console.log(`🤖 AI Text Reply: "${textReply}"`);
 
-    // IF CUSTOMER SENT VOICE NOTE -> SEND ONLY VOICE NOTE REPLY
+    // IF CUSTOMER SENT VOICE NOTE -> REPLY ONLY WITH VOICE NOTE
     if (isVoiceMsg) {
-      console.log("🎙️ Generating Pakistani Female Voice Note (Nova)...");
+      console.log("🎙️ Generating Female Voice Note...");
       const speechPath = await generateSpeechAudio(urduScriptReply, `reply_${msg.id}`);
       const audioMediaId = await uploadMediaToWhatsApp(speechPath, phoneId, waToken);
 
@@ -192,9 +199,9 @@ app.post("/webhook", async (req, res) => {
       );
 
       if (fs.existsSync(speechPath)) fs.unlinkSync(speechPath);
-      console.log("✅ Only Voice Note Reply Sent!");
+      console.log("✅ Sent Audio-Only Reply!");
     } 
-    // IF CUSTOMER SENT TEXT -> SEND TEXT REPLY
+    // IF CUSTOMER SENT TEXT -> REPLY ONLY WITH TEXT
     else {
       await axios.post(
         `https://graph.facebook.com/v26.0/${phoneId}/messages`,
@@ -207,7 +214,7 @@ app.post("/webhook", async (req, res) => {
         },
         { headers: { Authorization: `Bearer ${waToken}`, "Content-Type": "application/json" } }
       );
-      console.log("✅ Text Reply Sent!");
+      console.log("✅ Sent Text-Only Reply!");
     }
 
   } catch (error) {
@@ -215,7 +222,40 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
+// Single Follow-Up Worker (Checks every hour for 24-hour inactive customers, sends only ONCE)
+setInterval(async () => {
+  try {
+    const now = Date.now();
+    const oneDay = 24 * 60 * 60 * 1000;
+    const phoneId = process.env.PHONE_NUMBER_ID ? process.env.PHONE_NUMBER_ID.trim() : "";
+    const waToken = process.env.WHATSAPP_TOKEN ? process.env.WHATSAPP_TOKEN.trim() : "";
+
+    if (!phoneId || !waToken) return;
+
+    for (const [from, ts] of lastMsgAt.entries()) {
+      if (followupSent.get(from)) continue;
+      if (now - ts >= oneDay) {
+        console.log(`📌 Sending 24h Single Follow-up to ${from}...`);
+        await axios.post(
+          `https://graph.facebook.com/v26.0/${phoneId}/messages`,
+          {
+            messaging_product: "whatsapp",
+            recipient_type: "individual",
+            to: from,
+            type: "text",
+            text: { body: "Assalam-o-Alaikum, bas confirm karna tha ke kya aapka order place karna hai ya koi aur sawal hai?" }
+          },
+          { headers: { Authorization: `Bearer ${waToken}`, "Content-Type": "application/json" } }
+        );
+        followupSent.set(from, true);
+      }
+    }
+  } catch (e) {
+    console.error("❌ Follow-up Worker Error:", e.message);
+  }
+}, 60 * 60 * 1000);
+
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Aasane Foods Female Voice Bot Live on Port ${PORT}`);
+  console.log(`🚀 Aasane Foods Custom Bot Live on Port ${PORT}`);
 });
