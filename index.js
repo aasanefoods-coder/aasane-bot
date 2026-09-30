@@ -14,8 +14,9 @@ const openai = new OpenAI({
 const chatHistories = new Map();
 const lastMsgAt = new Map();
 const followupSent = new Map();
+const lastBotReply = new Map(); // same reply dobara na bheje
 
-// Image Links
+// Images
 const COMBINE_IMAGE = "https://raw.githubusercontent.com/aasanefoods-coder/aasane-bot/main/Max_a_isme_har_packet_ke_a.png";
 const CHOCOLATE_IMAGE = "https://raw.githubusercontent.com/aasanefoods-coder/aasane-bot/main/WhatsApp%20Imagec%202026-09-28%20at%2010.55.51%20PM.jpeg";
 const MANGO_IMAGE = "https://raw.githubusercontent.com/aasanefoods-coder/aasane-bot/main/WhatsApp%20Imagem%202026-09-28%20at%2010.55.35%20PM.jpeg";
@@ -46,54 +47,68 @@ const RECIPE_TEXT_URDU = `🍨 صرف ایک پاؤ دودھ سے تقریباً
 - بیٹ کرنے سے پہلے یقینی بنائیں کہ بیس مکمل جما ہوا ہو، اس میں ذرا سا بھی لیکوئیڈ (Liquid) باقی نہ ہو۔`;
 
 const SYSTEM_PROMPT = `
-Tu "Aasane Foods" (Pakistan) ki polite aur helpful sales representative hai.
-Tu WhatsApp par Roman Urdu, Urdu Script ya English me baat karti hai.
+Tu "Aasane Foods" Pakistan ki bohot friendly, soft aur professional sales girl hai.
+Roman Urdu / Urdu / English me baat kar.
 
-GREETING RULES (STRICT):
-- Full Greeting ("Assalam-o-Alaikum! Aasane Foods me khushamdeed!") ONLY in the VERY FIRST message.
-- If customer says "AOA", "Assalam-o-Alaikum", "Salam" in LATER messages, ONLY reply: "Walaikum Assalam! Ji batayein, main kya madad kar sakti hoon?"
-- DO NOT repeat "Aasane Foods me khushamdeed" or send product intros in follow-up chats!
+ASLI INSAN KI TARAH BAAT KARO:
+- Kabhi bhi SAME message 2 baar mat bhejo.
+- Agar customer gusse me ho ya bole "number sahi hai", to soft bano, argue mat karo.
+- Short, pyar se, clear baat karo.
 
-PRODUCT & PRICING:
-- Main Product: Ice Cream Mix Powder (Rs. 180 per packet)
-- 5 Flavors ONLY: Chocolate, Mango (never write "Aam"), Strawberry, Vanilla, Pistachio/Pista (never write "Kulfa").
-- Delivery Charges (DC):
-  * Karachi: 1-3 Packets = Rs. 200 | 4-5 Packets = Rs. 150
-  * Other Cities: 1-3 Packets = Rs. 250 | 4-5 Packets = Rs. 150
-- Fixed Price: Strictly Rs. 180. If discount asked: "Sir 20 packets lene walo ko bhi 180 hi lagta hai, price pehle se bohot kam hai."
+GREETING:
+- Full greeting SIRF pehli baat me:
+  "Assalam-o-Alaikum! Aasane Foods me khushamdeed! 🍦"
+- Baad me AOA/Salam aaye to sirf:
+  "Walaikum Assalam! Ji batayein 🙂"
+- Dobara khushamdeed/product intro mat do.
 
-PHONE NUMBER VALIDATION (PAKISTAN):
-- Phone number MUST be valid:
-  * Starts with '03' and EXACTLY 11 digits long (e.g., 03001234567).
-  * OR starts with '923' and EXACTLY 12 digits long (e.g., 923001234567).
-- If phone number is missing digits or invalid, SAY EXACTLY:
-  "Bhai phone number incomplete hai. Pakistani number 11 digits ka (0300xxxxxxx) hona chahiye. Kindly sahi number bhej dein."
+PRODUCT:
+- Ice Cream Mix Powder
+- Price: Rs. 180 per packet
+- Flavors: Chocolate, Mango, Strawberry, Vanilla, Pistachio/Pista
+- Mango ko kabhi Aam mat likho, Kulfa mat likho.
 
-ORDER CONFIRMATION TWO-STEP FLOW:
-1. When customer provides Name, Phone, and Address (with City):
-   - First check if Phone Number is valid (11 digits starting 03 or 12 digits starting 923).
-   - If address is missing City, ask for City name.
-   - If valid, send BILL PREVIEW and ask for confirmation:
-     "Aapka order bill summary:
-     Name: [Name]
-     Phone: [Phone]
-     Address: [Address, City]
-     Packets: [Packets] ([Flavors])
-     Total COD: Rs. [Total] (including DC)
+DC:
+- Karachi: 1-3 = 200 | 4-5 = 150
+- Other city: 1-3 = 250 | 4-5 = 150
 
-     Kya order confirm kar dein? Kindly 'HAAN' ya 'YES' likh kar bata dein."
-   - Set "order_confirmed": false at this stage!
-2. Set "order_confirmed": true ONLY AND ONLY IF customer explicitly replies "HAAN", "HAN", "YES", "OK", "CONFIRM DO", etc.
+ORDER FLOW (BOHOT ZAROORI):
+1) Jab tak customer clearly order na de / details na bheje, phone ya address MAT mango.
+2) "Mera order lein" bole to pehle soft pooch:
+   - Kaunse flavors?
+   - Kitne packets?
+   - Name, phone, complete address (city ke sath)
+3) Phone tab check karo jab customer number bheje.
+4) Valid phone:
+   - 03XXXXXXXXX = exactly 11 digits
+   - 923XXXXXXXXX = exactly 12 digits
+5) Agar number galat ho:
+   - Soft samjhao, same line dobara mat maro.
+   - Example:
+     "Ji bilkul, main check kar leti hoon 🙂
+     Aapka number thoda incomplete/galat format me hai.
+     Pakistani number usually 03 se start hota hai aur total 11 digit hota hai
+     (jaise 0300xxxxxxx).
+     Digits count karke ek baar dobara bhej dein, main turant order aage barhati hoon."
+6) Details complete hon to PEHLE bill confirmation bhejo:
+   Name, Phone, Address, Packets/Flavors, COD total
+   aur poocho: "Agar sahi hai to HAAN likh dein."
+7) order_confirmed=true SIRF tab jab customer HAAN/YES/OK/CONFIRM likhe.
 
-RECIPE RULE:
-- If customer asks recipe/video/tareeqa: DO NOT write recipe text yourself. Set "is_recipe_requested": true and write short line: "Ji, recipe aur video tutorial ye raha:"
+RECIPE:
+- Recipe/video pooche to khud steps mat likho.
+- Short bolo: "Ji, recipe aur video ye raha:"
+- is_recipe_requested=true
 
-JSON RESPONSE FORMAT (STRICT):
+FLAVORS:
+- Flavors pooche to short text do aur is_flavor_request=true
+
+JSON STRICT:
 {
-  "text_reply": "Message for customer",
-  "is_flavor_request": true/false,
-  "is_recipe_requested": true/false,
-  "order_confirmed": true/false,
+  "text_reply": "short friendly reply",
+  "is_flavor_request": false,
+  "is_recipe_requested": false,
+  "order_confirmed": false,
   "order_data": {
     "name": "",
     "phone": "",
@@ -105,6 +120,16 @@ JSON RESPONSE FORMAT (STRICT):
   }
 }
 `;
+
+function isValidPakPhone(phone) {
+  if (!phone) return false;
+  const p = String(phone).replace(/[\s-]/g, "");
+  return /^(03\d{9}|923\d{9})$/.test(p);
+}
+
+function normalizeReply(text) {
+  return (text || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
 
 async function downloadWhatsAppMedia(mediaId, token) {
   const urlResponse = await axios.get(`https://graph.facebook.com/v26.0/${mediaId}`, {
@@ -175,7 +200,6 @@ app.post("/webhook", async (req, res) => {
     const sheetScriptUrl = process.env.GOOGLE_SHEET_SCRIPT_URL ? process.env.GOOGLE_SHEET_SCRIPT_URL.trim() : "";
 
     const isFirstTimeUser = !chatHistories.has(from);
-
     lastMsgAt.set(from, Date.now());
     followupSent.set(from, false);
 
@@ -203,45 +227,75 @@ app.post("/webhook", async (req, res) => {
 
     const history = chatHistories.get(from);
     history.push({ role: "user", content: customerText });
-    if (history.length > 12) history.splice(1, history.length - 12);
+    if (history.length > 14) history.splice(1, history.length - 14);
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: history,
       response_format: { type: "json_object" },
-      max_tokens: 300,
-      temperature: 0.2
+      max_tokens: 280,
+      temperature: 0.3
     });
 
     let parsed = {};
     let textReply = "";
     try {
       parsed = JSON.parse(completion.choices[0].message.content);
-      textReply = parsed.text_reply || "Ji, batayein main madad karti hoon.";
+      textReply = (parsed.text_reply || "").trim();
     } catch (e) {
-      textReply = "Ji, batayein main madad karti hoon.";
+      textReply = "Ji bilkul 🙂 batayein main madad karti hoon.";
     }
 
-    // Override first message greeting
+    // First message forced greeting
     if (isFirstTimeUser) {
       textReply = "Assalam-o-Alaikum! Aasane Foods me khushamdeed! 🍦\nGhar par creamy ice cream banane ka premium mix powder sirf Rs. 180 me.";
+    } else {
+      // Later salam
+      if (/^(aoa|assalamualaikum|assalam-o-alaikum|salam|hello|hi)\b/i.test(customerText.trim())) {
+        textReply = "Walaikum Assalam! Ji batayein 🙂";
+      }
     }
 
+    // Soft phone handling if AI becomes robotic
+    const phoneFromOrder = parsed?.order_data?.phone || "";
+    const customerClaimsNumberOk = /sahi number|shi number|number sahi|number shi|galat nahi|check karein|galti/i.test(customerText);
+    if (phoneFromOrder && !isValidPakPhone(phoneFromOrder)) {
+      textReply = customerClaimsNumberOk
+        ? "Ji bilkul, galti ho sakti hai meri taraf se bhi 🙂\nAap ek baar digits count kar ke number dobara bhej dein.\nPakistani number 03 se start + total 11 digit hona chahiye (ya 92 se 12 digit). Main turant aage barhati hoon."
+        : "Ji soft si baat hai 🙂 number format thoda mismatch hai.\nPakistani number 03 se start hota hai aur 11 digit ka hota hai (jaise 0300xxxxxxx).\nEk baar count karke sahi number bhej dein, order confirm kar deti hoon.";
+      parsed.order_confirmed = false;
+    }
+
+    // Same message anti-repeat
+    const prev = lastBotReply.get(from);
+    if (prev && normalizeReply(prev) === normalizeReply(textReply)) {
+      textReply = "Ji samajh gayi 🙂 thoda clear detail bhej dein, main turant help karti hoon. Flavors, packets, name, phone aur city ke sath address bhej sakte hain.";
+    }
+
+    if (!textReply) textReply = "Ji batayein 🙂";
+
     history.push({ role: "assistant", content: textReply });
+    lastBotReply.set(from, textReply);
     await sendText(from, textReply, phoneId, waToken);
 
-    // 1) Combine Image ONLY on VERY FIRST message
+    // 1) First message: combine image + finger message
     if (isFirstTimeUser) {
       await sendImage(
         from,
         COMBINE_IMAGE,
-        "🍦 Aasane Premium Ice Cream Mix Powder - 5 Flavors",
+        "🍦 Aasane Premium Ice Cream Mix Powder",
+        phoneId,
+        waToken
+      );
+      await sendText(
+        from,
+        " Flavors and details 👆",
         phoneId,
         waToken
       );
     }
 
-    // 2) 5 Separate Images on Flavor Request
+    // 2) Flavor request => 5 images
     const askedFlavors =
       parsed.is_flavor_request ||
       /flavor|flavours|konse flavor|kon sa flavor|available flavor|flover/i.test(customerText);
@@ -254,7 +308,7 @@ app.post("/webhook", async (req, res) => {
       await sendImage(from, PISTA_IMAGE, "Pistachio 🥜", phoneId, waToken);
     }
 
-    // 3) Recipe Request => Send Video Tutorial link + Urdu text
+    // 3) Recipe
     const askedRecipe =
       parsed.is_recipe_requested ||
       /recipe|tareeqa|kaise banaye|banane ka|video/i.test(customerText);
@@ -269,9 +323,14 @@ app.post("/webhook", async (req, res) => {
       await sendText(from, RECIPE_TEXT_URDU, phoneId, waToken);
     }
 
-    // 4) Save confirmed order to Google Sheet
-    if (parsed.order_confirmed && parsed.order_data && sheetScriptUrl) {
-      console.log("📊 Saving confirmed order to Google Sheet...");
+    // 4) Save only truly confirmed + valid phone orders
+    if (
+      parsed.order_confirmed &&
+      parsed.order_data &&
+      isValidPakPhone(parsed.order_data.phone) &&
+      sheetScriptUrl
+    ) {
+      console.log("📊 Saving confirmed order...");
       await axios.post(sheetScriptUrl, parsed.order_data).catch((err) => {
         console.error("Sheet save error:", err.message);
       });
@@ -297,7 +356,7 @@ setInterval(async () => {
 
       await sendText(
         from,
-        "Assalam-o-Alaikum, bas check kar raha tha. Order confirm karna hai ya koi help chahiye?",
+        "Assalam-o-Alaikum, bas check kar rahi thi 🙂 order confirm karna hai ya koi help chahiye?",
         phoneId,
         waToken
       );
@@ -310,5 +369,5 @@ setInterval(async () => {
 
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Aasane Foods Complete Validated Sales Bot Live on Port ${PORT}`);
+  console.log(`🚀 Aasane Foods Human-like Sales Bot Live on Port ${PORT}`);
 });
